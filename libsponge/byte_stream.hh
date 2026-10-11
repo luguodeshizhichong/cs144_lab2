@@ -17,6 +17,12 @@ class ByteStream {
     // that's a sign that you probably want to keep exploring
     // different approaches.
 
+    size_t _capacity = 0;       //!< Maximum number of bytes the buffer can hold
+    std::string _buffer = {};   //!< The FIFO byte buffer itself
+    bool _input_ended = false;  //!< Flag indicating that the writer has ended the input
+    size_t _bytes_written = 0;  //!< Total number of bytes accepted into the stream
+    size_t _bytes_read = 0;     //!< Total number of bytes removed (popped) from the stream
+
     bool _error{};  //!< Flag indicating that the stream suffered an error.
 
   public:

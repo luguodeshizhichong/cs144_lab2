@@ -17,6 +17,28 @@ void get_URL(const string &host, const string &path) {
     // (not just one call to read() -- everything) until you reach
     // the "eof" (end of file).
 
+    // 1. 创建一个 TCP 套接字
+    TCPSocket socket;
+    
+    // 2. 连接到目标主机的 80 端口（http 服务）
+    socket.connect(Address(host, "http"));
+    
+    // 3. 构造 HTTP/1.1 GET 请求
+    // 注意：HTTP 协议要求每一行以 \r\n 结尾，请求头结束处必须有一个空行
+    string request = "GET " + path + " HTTP/1.1\r\n" +
+                     "Host: " + host + "\r\n" +
+                     "Connection: close\r\n" +
+                     "\r\n";
+                     
+    // 4. 发送请求
+    socket.write(request);
+    
+    // 5. 循环读取服务器发回的响应，直到文件结束 (EOF)
+    while (!socket.eof()) {
+        // 读取数据并打印到标准输出
+        cout << socket.read();
+    }
+
     cerr << "Function called: get_URL(" << host << ", " << path << ").\n";
     cerr << "Warning: get_URL() has not been implemented yet.\n";
 }
