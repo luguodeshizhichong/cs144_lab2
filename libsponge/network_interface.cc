@@ -2,21 +2,15 @@
 
 #include "arp_message.hh"
 #include "ethernet_frame.hh"
+#include "ipv4_datagram.hh"
 
 #include <iostream>
-
-// Dummy implementation of a network interface
-// Translates from {IP datagram, next hop address} to link-layer frame, and from link-layer frame to IP datagram
-
-// For Lab 5, please replace with a real implementation that passes the
-// automated checks run by `make check_lab5`.
-
-// You will need to add private members to the class declaration in `network_interface.hh`
-
-template <typename... Targs>
-void DUMMY_CODE(Targs &&... /* unused */) {}
+#include <utility>
 
 using namespace std;
+
+// Implementation of a network interface
+// Translates from {IP datagram, next hop address} to link-layer frame, and from link-layer frame to IP datagram
 
 //! \param[in] ethernet_address Ethernet (what ARP calls "hardware") address of the interface
 //! \param[in] ip_address IP (what ARP calls "protocol") address of the interface
@@ -26,6 +20,44 @@ NetworkInterface::NetworkInterface(const EthernetAddress &ethernet_address, cons
          << ip_address.ip() << "\n";
 }
 
+void NetworkInterface::_push_frame(const EthernetAddress &dst, const uint16_t type, const BufferList &payload) {
+    EthernetFrame frame;
+    frame.header().src = _ethernet_address;
+    frame.header().dst = dst;
+    frame.header().type = type;
+    frame.payload() = payload;
+    _frames_out.push(std::move(frame));
+}
+
+void NetworkInterface::_send_arp_request(const uint32_t target_ip) {
+    ARPMessage arp_request;
+    arp_request.opcode = ARPMessage::OPCODE_REQUEST;
+    arp_request.sender_ethernet_address = _ethernet_address;
+    arp_request.sender_ip_address = _ip_address.ipv4_numeric();
+    arp_request.target_ethernet_address = {};  // unknown: all zeroes while asking
+    arp_request.target_ip_address = target_ip;
+
+    _push_frame(ETHERNET_BROADCAST, EthernetHeader::TYPE_ARP, BufferList{arp_request.serialize()});
+}
+
+void NetworkInterface::_flush_pending(const uint32_t next_hop_ip) {
+    const auto pending_it = _pending_datagrams.find(next_hop_ip);
+    if (pending_it == _pending_datagrams.end()) {
+        return;
+    }
+
+    const auto cache_it = _arp_cache.find(next_hop_ip);
+    if (cache_it == _arp_cache.end()) {
+        return;
+    }
+
+    for (const InternetDatagram &dgram : pending_it->second) {
+        _push_frame(cache_it->second.ethernet_address, EthernetHeader::TYPE_IPv4, dgram.serialize());
+    }
+
+    _pending_datagrams.erase(pending_it);
+}
+
 //! \param[in] dgram the IPv4 datagram to be sent
 //! \param[in] next_hop the IP address of the interface to send it to (typically a router or default gateway, but may also be another host if directly connected to the same network as the destination)
 //! (Note: the Address type can be converted to a uint32_t (raw 32-bit IP address) with the Address::ipv4_numeric() method.)
@@ -33,14 +65,84 @@ void NetworkInterface::send_datagram(const InternetDatagram &dgram, const Addres
     // convert IP address of next hop to raw 32-bit representation (used in ARP header)
     const uint32_t next_hop_ip = next_hop.ipv4_numeric();
 
-    DUMMY_CODE(dgram, next_hop, next_hop_ip);
+    // known mapping: encapsulate the datagram right away
+    const auto cache_it = _arp_cache.find(next_hop_ip);
+    if (cache_it != _arp_cache.end()) {
+        _push_frame(cache_it->second.ethernet_address, EthernetHeader::TYPE_IPv4, dgram.serialize());
+        return;
+    }
+
+    // unknown mapping: hold on to the datagram until the ARP reply arrives
+    _pending_datagrams[next_hop_ip].push_back(dgram);
+
+    // ... but do not flood the network: at most one request per IP address every five seconds
+    if (_arp_requests.count(next_hop_ip) == 0) {
+        _send_arp_request(next_hop_ip);
+        _arp_requests[next_hop_ip] = ARP_REQUEST_INTERVAL_MS;
+    }
 }
 
 //! \param[in] frame the incoming Ethernet frame
 optional<InternetDatagram> NetworkInterface::recv_frame(const EthernetFrame &frame) {
-    DUMMY_CODE(frame);
+    // ignore frames that are neither for us nor broadcast
+    if (frame.header().dst != _ethernet_address and frame.header().dst != ETHERNET_BROADCAST) {
+        return {};
+    }
+
+    if (frame.header().type == EthernetHeader::TYPE_IPv4) {
+        InternetDatagram dgram;
+        if (dgram.parse(frame.payload().concatenate()) != ParseResult::NoError) {
+            return {};
+        }
+        return dgram;
+    }
+
+    if (frame.header().type == EthernetHeader::TYPE_ARP) {
+        ARPMessage arp;
+        if (arp.parse(frame.payload().concatenate()) != ParseResult::NoError) {
+            return {};
+        }
+
+        // learn (or refresh) the sender's mapping, valid for 30 seconds
+        _arp_cache[arp.sender_ip_address] = ARPCacheEntry{arp.sender_ethernet_address, ARP_CACHE_TTL_MS};
+        _arp_requests.erase(arp.sender_ip_address);
+
+        // answer requests that ask for our own IP address
+        if (arp.opcode == ARPMessage::OPCODE_REQUEST and arp.target_ip_address == _ip_address.ipv4_numeric()) {
+            ARPMessage arp_reply;
+            arp_reply.opcode = ARPMessage::OPCODE_REPLY;
+            arp_reply.sender_ethernet_address = _ethernet_address;
+            arp_reply.sender_ip_address = _ip_address.ipv4_numeric();
+            arp_reply.target_ethernet_address = arp.sender_ethernet_address;
+            arp_reply.target_ip_address = arp.sender_ip_address;
+
+            _push_frame(arp.sender_ethernet_address, EthernetHeader::TYPE_ARP, BufferList{arp_reply.serialize()});
+        }
+
+        // the sender's address is now known: release any datagrams waiting for it
+        _flush_pending(arp.sender_ip_address);
+    }
+
     return {};
 }
 
 //! \param[in] ms_since_last_tick the number of milliseconds since the last call to this method
-void NetworkInterface::tick(const size_t ms_since_last_tick) { DUMMY_CODE(ms_since_last_tick); }
+void NetworkInterface::tick(const size_t ms_since_last_tick) {
+    for (auto it = _arp_cache.begin(); it != _arp_cache.end();) {
+        if (ms_since_last_tick >= it->second.ttl_ms) {
+            it = _arp_cache.erase(it);  // mapping expired: the next datagram triggers a new ARP lookup
+        } else {
+            it->second.ttl_ms -= ms_since_last_tick;
+            ++it;
+        }
+    }
+
+    for (auto it = _arp_requests.begin(); it != _arp_requests.end();) {
+        if (ms_since_last_tick >= it->second) {
+            it = _arp_requests.erase(it);  // request expired: another ARP request may be sent
+        } else {
+            it->second -= ms_since_last_tick;
+            ++it;
+        }
+    }
+}

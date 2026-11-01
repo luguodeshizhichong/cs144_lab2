@@ -5,8 +5,11 @@
 #include "tcp_over_ip.hh"
 #include "tun.hh"
 
+#include <cstdint>
 #include <optional>
 #include <queue>
+#include <unordered_map>
+#include <vector>
 
 //! \brief A "network interface" that connects IP (the internet layer, or network layer)
 //! with Ethernet (the network access layer, or link layer).
@@ -31,6 +34,18 @@
 //! and learns or replies as necessary.
 class NetworkInterface {
   private:
+    //! ARP mapping lifetime in milliseconds (an entry is forgotten after 30 seconds)
+    static constexpr size_t ARP_CACHE_TTL_MS = 30000;
+
+    //! Minimum interval between ARP requests for the same unresolved IP address (5 seconds)
+    static constexpr size_t ARP_REQUEST_INTERVAL_MS = 5000;
+
+    //! A learned mapping from a next-hop IP address to an Ethernet address
+    struct ARPCacheEntry {
+        EthernetAddress ethernet_address{};  //!< Ethernet address of the next hop
+        size_t ttl_ms{};                     //!< remaining lifetime of this entry, in milliseconds
+    };
+
     //! Ethernet (known as hardware, network-access-layer, or link-layer) address of the interface
     EthernetAddress _ethernet_address;
 
@@ -39,6 +54,24 @@ class NetworkInterface {
 
     //! outbound queue of Ethernet frames that the NetworkInterface wants sent
     std::queue<EthernetFrame> _frames_out{};
+
+    //! ARP cache: next-hop IP address -> (Ethernet address, remaining lifetime)
+    std::unordered_map<uint32_t, ARPCacheEntry> _arp_cache{};
+
+    //! Outstanding ARP requests: target IP address -> remaining time before another request may be sent
+    std::unordered_map<uint32_t, size_t> _arp_requests{};
+
+    //! Datagrams waiting for ARP resolution: next-hop IP address -> datagrams, in the order they were sent
+    std::unordered_map<uint32_t, std::vector<InternetDatagram>> _pending_datagrams{};
+
+    //! \brief Encapsulate `payload` in an Ethernet frame and queue it for transmission
+    void _push_frame(const EthernetAddress &dst, const uint16_t type, const BufferList &payload);
+
+    //! \brief Broadcast an ARP request asking for the Ethernet address of `target_ip`
+    void _send_arp_request(const uint32_t target_ip);
+
+    //! \brief Send all datagrams that were waiting for the Ethernet address of `next_hop_ip`
+    void _flush_pending(const uint32_t next_hop_ip);
 
   public:
     //! \brief Construct a network interface with given Ethernet (network-access-layer) and IP (internet-layer) addresses
