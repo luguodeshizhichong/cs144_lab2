@@ -23,27 +23,27 @@ void Router::add_route(const uint32_t route_prefix,
     cerr << "DEBUG: adding route " << Address::from_ipv4_numeric(route_prefix).ip() << "/" << int(prefix_length)
          << " => " << (next_hop.has_value() ? next_hop->ip() : "(direct)") << " on interface " << interface_num << "\n";
 
-    // store the forwarding rule; the routing table keeps the order in which routes were added
+    // 保存这条转发规则;路由表按路由添加的先后顺序存放
     _routes.push_back(RouteEntry{route_prefix, prefix_length, next_hop, interface_num});
 }
 
 //! \param[in] dgram The datagram to be routed
 void Router::route_one_datagram(InternetDatagram &dgram) {
-    // a datagram whose time-to-live has run out (or is about to) must not be forwarded
+    // 生存时间已耗尽(或即将耗尽)的数据报不得转发
     if (dgram.header().ttl <= 1) {
         return;
     }
 
-    // longest prefix match: among all matching routes, keep the most specific one
+    // 最长前缀匹配:在所有匹配的路由中保留前缀最长(最具体)的一条
     const uint32_t dst = dgram.header().dst;
     const RouteEntry *best_route = nullptr;
     for (const RouteEntry &route : _routes) {
         if (route.prefix_length > 32) {
-            continue;  // malformed route: it can never match
+            continue;  // 非法的路由:它永远无法匹配任何地址
         }
 
-        // a prefix length of zero matches every destination address (default route);
-        // otherwise the high-order `prefix_length` bits must be identical
+        // 前缀长度为 0 表示匹配任意目的地址(默认路由);
+        // 否则要求高 prefix_length 位完全相同
         const bool matches = route.prefix_length == 0 or
                              (dst >> (32 - route.prefix_length)) == (route.route_prefix >> (32 - route.prefix_length));
 
@@ -53,10 +53,10 @@ void Router::route_one_datagram(InternetDatagram &dgram) {
     }
 
     if (best_route == nullptr) {
-        return;  // no route to this destination: drop the datagram
+        return;  // 没有通往该目的地的路由:丢弃这个数据报
     }
 
-    // forward the datagram, with one less hop left
+    // 转发该数据报,剩余跳数减一
     dgram.header().ttl -= 1;
 
     const Address next_hop =

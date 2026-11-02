@@ -43,18 +43,18 @@ class AsyncNetworkInterface : public NetworkInterface {
 //! \brief A router that has multiple network interfaces and
 //! performs longest-prefix-match routing between them.
 class Router {
-    //! A single entry (forwarding rule) in the routing table
+    //! 路由表中的一条表项(一条转发规则)
     struct RouteEntry {
-        uint32_t route_prefix{};  //!< network prefix that the datagram's destination address is matched against
-        uint8_t prefix_length{};  //!< how many high-order bits of route_prefix must match
-        std::optional<Address> next_hop{};  //!< next hop; empty means the network is directly attached
-        size_t interface_num{};             //!< index of the interface used to send matching datagrams
+        uint32_t route_prefix{};            //!< 用于匹配数据报目的地址的网络前缀
+        uint8_t prefix_length{};            //!< route_prefix 中需要匹配的高位比特数
+        std::optional<Address> next_hop{};  //!< 下一跳;为空表示该网络直连在本路由器上
+        size_t interface_num{};             //!< 发送匹配数据报所用的接口下标
     };
 
     //! The router's collection of network interfaces
     std::vector<AsyncNetworkInterface> _interfaces{};
 
-    //! The routing table, in the order the routes were added
+    //! 路由表,按路由添加的先后顺序保存
     std::vector<RouteEntry> _routes{};
 
     //! Send a single datagram from the appropriate outbound interface to the next hop,

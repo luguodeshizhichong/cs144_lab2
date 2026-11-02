@@ -34,16 +34,16 @@
 //! and learns or replies as necessary.
 class NetworkInterface {
   private:
-    //! ARP mapping lifetime in milliseconds (an entry is forgotten after 30 seconds)
+    //! ARP 映射的有效期(毫秒):超过 30 秒未被刷新则遗忘该条目
     static constexpr size_t ARP_CACHE_TTL_MS = 30000;
 
-    //! Minimum interval between ARP requests for the same unresolved IP address (5 seconds)
+    //! 对同一个尚未解析的 IP 地址,两次 ARP 请求之间的最小间隔(5 秒)
     static constexpr size_t ARP_REQUEST_INTERVAL_MS = 5000;
 
-    //! A learned mapping from a next-hop IP address to an Ethernet address
+    //! 一条学到的映射:下一跳 IP 地址 -> 以太网地址
     struct ARPCacheEntry {
-        EthernetAddress ethernet_address{};  //!< Ethernet address of the next hop
-        size_t ttl_ms{};                     //!< remaining lifetime of this entry, in milliseconds
+        EthernetAddress ethernet_address{};  //!< 下一跳的以太网地址
+        size_t ttl_ms{};                     //!< 该条目的剩余生存时间(毫秒)
     };
 
     //! Ethernet (known as hardware, network-access-layer, or link-layer) address of the interface
@@ -55,22 +55,22 @@ class NetworkInterface {
     //! outbound queue of Ethernet frames that the NetworkInterface wants sent
     std::queue<EthernetFrame> _frames_out{};
 
-    //! ARP cache: next-hop IP address -> (Ethernet address, remaining lifetime)
+    //! ARP 缓存:下一跳 IP 地址 -> (以太网地址, 剩余生存时间)
     std::unordered_map<uint32_t, ARPCacheEntry> _arp_cache{};
 
-    //! Outstanding ARP requests: target IP address -> remaining time before another request may be sent
+    //! 尚未完成的 ARP 请求:目标 IP 地址 -> 距下次可以再发请求的剩余时间
     std::unordered_map<uint32_t, size_t> _arp_requests{};
 
-    //! Datagrams waiting for ARP resolution: next-hop IP address -> datagrams, in the order they were sent
+    //! 等待 ARP 解析的数据报:下一跳 IP 地址 -> 按发送顺序排队的数据报
     std::unordered_map<uint32_t, std::vector<InternetDatagram>> _pending_datagrams{};
 
-    //! \brief Encapsulate `payload` in an Ethernet frame and queue it for transmission
+    //! \brief 把 payload 封装成一个以太网帧,并放入待发送队列
     void _push_frame(const EthernetAddress &dst, const uint16_t type, const BufferList &payload);
 
-    //! \brief Broadcast an ARP request asking for the Ethernet address of `target_ip`
+    //! \brief 广播一个 ARP 请求,询问 target_ip 对应的以太网地址
     void _send_arp_request(const uint32_t target_ip);
 
-    //! \brief Send all datagrams that were waiting for the Ethernet address of `next_hop_ip`
+    //! \brief 把所有等待 next_hop_ip 以太网地址的数据报发出
     void _flush_pending(const uint32_t next_hop_ip);
 
   public:
